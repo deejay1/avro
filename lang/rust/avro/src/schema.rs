@@ -45,7 +45,7 @@ use strum_macros::{Display, EnumDiscriminants, EnumString};
 
 /// Represents an Avro schema fingerprint
 /// More information about Avro schema fingerprints can be found in the
-/// [Avro Schema Fingerprint documentation](https://avro.apache.org/docs/current/spec.html#schema_fingerprints)
+/// [Avro Schema Fingerprint documentation](https://avro.apache.org/docs/current/specification/#schema-fingerprints)
 pub struct SchemaFingerprint {
     pub bytes: Vec<u8>,
 }
@@ -66,7 +66,7 @@ impl fmt::Display for SchemaFingerprint {
 
 /// Represents any valid Avro schema
 /// More information about Avro schemas can be found in the
-/// [Avro Specification](https://avro.apache.org/docs/current/spec.html#schemas)
+/// [Avro Specification](https://avro.apache.org/docs/current/specification/#schema-declaration)
 #[derive(Clone, Debug, EnumDiscriminants, Display)]
 #[strum_discriminants(name(SchemaKind), derive(Hash, Ord, PartialOrd))]
 pub enum Schema {
@@ -227,7 +227,7 @@ impl From<&types::Value> for SchemaKind {
 /// `aliases` can also be defined, to facilitate schema evolution.
 ///
 /// More information about schema names can be found in the
-/// [Avro specification](https://avro.apache.org/docs/current/spec.html#names)
+/// [Avro specification](https://avro.apache.org/docs/current/specification/#names)
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Name {
     pub name: String,
@@ -297,7 +297,7 @@ impl Name {
     /// Return the `fullname` of this `Name`
     ///
     /// More information about fullnames can be found in the
-    /// [Avro specification](https://avro.apache.org/docs/current/spec.html#names)
+    /// [Avro specification](https://avro.apache.org/docs/current/specification/#names)
     pub fn fullname(&self, default_namespace: Namespace) -> String {
         if self.name.contains('.') {
             self.name.clone()
@@ -545,7 +545,7 @@ impl TryFrom<Schema> for ResolvedOwnedSchema {
             names,
             root_schema: schema,
         };
-        Self::from_internal(&rs.root_schema, &mut rs.names, &None)?;
+        resolve_names(&rs.root_schema, &mut rs.names, &None)?;
         Ok(rs)
     }
 }
@@ -557,57 +557,68 @@ impl ResolvedOwnedSchema {
     pub(crate) fn get_names(&self) -> &Names {
         &self.names
     }
+}
 
-    fn from_internal(
-        schema: &Schema,
-        names: &mut Names,
-        enclosing_namespace: &Namespace,
-    ) -> AvroResult<()> {
-        match schema {
-            Schema::Array(schema) => Self::from_internal(&schema.items, names, enclosing_namespace),
-            Schema::Map(schema) => Self::from_internal(&schema.types, names, enclosing_namespace),
-            Schema::Union(UnionSchema { schemas, .. }) => {
-                for schema in schemas {
-                    Self::from_internal(schema, names, enclosing_namespace)?
+pub(crate) fn resolve_names(
+    schema: &Schema,
+    names: &mut Names,
+    enclosing_namespace: &Namespace,
+) -> AvroResult<()> {
+    match schema {
+        Schema::Array(schema) => resolve_names(&schema.items, names, enclosing_namespace),
+        Schema::Map(schema) => resolve_names(&schema.types, names, enclosing_namespace),
+        Schema::Union(UnionSchema { schemas, .. }) => {
+            for schema in schemas {
+                resolve_names(schema, names, enclosing_namespace)?
+            }
+            Ok(())
+        }
+        Schema::Enum(EnumSchema { name, .. }) | Schema::Fixed(FixedSchema { name, .. }) => {
+            let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
+            if names
+                .insert(fully_qualified_name.clone(), schema.clone())
+                .is_some()
+            {
+                Err(Error::AmbiguousSchemaDefinition(fully_qualified_name))
+            } else {
+                Ok(())
+            }
+        }
+        Schema::Record(RecordSchema { name, fields, .. }) => {
+            let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
+            if names
+                .insert(fully_qualified_name.clone(), schema.clone())
+                .is_some()
+            {
+                Err(Error::AmbiguousSchemaDefinition(fully_qualified_name))
+            } else {
+                let record_namespace = fully_qualified_name.namespace;
+                for field in fields {
+                    resolve_names(&field.schema, names, &record_namespace)?
                 }
                 Ok(())
             }
-            Schema::Enum(EnumSchema { name, .. }) | Schema::Fixed(FixedSchema { name, .. }) => {
-                let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
-                if names
-                    .insert(fully_qualified_name.clone(), schema.clone())
-                    .is_some()
-                {
-                    Err(Error::AmbiguousSchemaDefinition(fully_qualified_name))
-                } else {
-                    Ok(())
-                }
-            }
-            Schema::Record(RecordSchema { name, fields, .. }) => {
-                let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
-                if names
-                    .insert(fully_qualified_name.clone(), schema.clone())
-                    .is_some()
-                {
-                    Err(Error::AmbiguousSchemaDefinition(fully_qualified_name))
-                } else {
-                    let record_namespace = fully_qualified_name.namespace;
-                    for field in fields {
-                        Self::from_internal(&field.schema, names, &record_namespace)?
-                    }
-                    Ok(())
-                }
-            }
-            Schema::Ref { name } => {
-                let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
-                names
-                    .get(&fully_qualified_name)
-                    .map(|_| ())
-                    .ok_or(Error::SchemaResolutionError(fully_qualified_name))
-            }
-            _ => Ok(()),
         }
+        Schema::Ref { name } => {
+            let fully_qualified_name = name.fully_qualified_name(enclosing_namespace);
+            names
+                .get(&fully_qualified_name)
+                .map(|_| ())
+                .ok_or(Error::SchemaResolutionError(fully_qualified_name))
+        }
+        _ => Ok(()),
     }
+}
+
+pub(crate) fn resolve_names_with_schemata(
+    schemata: &Vec<&Schema>,
+    names: &mut Names,
+    enclosing_namespace: &Namespace,
+) -> AvroResult<()> {
+    for schema in schemata {
+        resolve_names(schema, names, enclosing_namespace)?;
+    }
+    Ok(())
 }
 
 /// Represents a `field` in a `record` Avro schema.
@@ -902,7 +913,7 @@ impl UnionSchema {
 
     /// Returns true if the any of the variants of this `UnionSchema` is `Null`.
     pub fn is_nullable(&self) -> bool {
-        !self.schemas.is_empty() && self.schemas.iter().any(|s| s == &Schema::Null)
+        self.schemas.iter().any(|x| matches!(x, Schema::Null))
     }
 
     /// Optionally returns a reference to the schema matched by this value, as well as its position
@@ -1011,7 +1022,7 @@ impl Schema {
     /// Converts `self` into its [Parsing Canonical Form].
     ///
     /// [Parsing Canonical Form]:
-    /// https://avro.apache.org/docs/1.8.2/spec.html#Parsing+Canonical+Form+for+Schemas
+    /// https://avro.apache.org/docs/current/specification/#parsing-canonical-form-for-schemas
     pub fn canonical_form(&self) -> String {
         let json = serde_json::to_value(self)
             .unwrap_or_else(|e| panic!("Cannot parse Schema from JSON: {e}"));
@@ -1021,9 +1032,9 @@ impl Schema {
     /// Generate [fingerprint] of Schema's [Parsing Canonical Form].
     ///
     /// [Parsing Canonical Form]:
-    /// https://avro.apache.org/docs/1.8.2/spec.html#Parsing+Canonical+Form+for+Schemas
+    /// https://avro.apache.org/docs/current/specification/#parsing-canonical-form-for-schemas
     /// [fingerprint]:
-    /// https://avro.apache.org/docs/current/spec.html#schema_fingerprints
+    /// https://avro.apache.org/docs/current/specification/#schema-fingerprints
     pub fn fingerprint<D: Digest>(&self) -> SchemaFingerprint {
         let mut d = D::new();
         d.update(self.canonical_form());
@@ -1868,7 +1879,7 @@ impl Parser {
 // to the namespace of the name it is an alias for. For example, if a type named "a.b"
 // has aliases of "c" and "x.y", then the fully qualified names of its aliases are "a.c"
 // and "x.y".
-// https://avro.apache.org/docs/current/spec.html#Aliases
+// https://avro.apache.org/docs/current/specification/#aliases
 fn fix_aliases_namespace(aliases: Option<Vec<String>>, namespace: &Namespace) -> Aliases {
     aliases.map(|aliases| {
         aliases
@@ -2132,7 +2143,7 @@ impl Serialize for RecordField {
 }
 
 /// Parses a **valid** avro schema into the Parsing Canonical Form.
-/// https://avro.apache.org/docs/1.8.2/spec.html#Parsing+Canonical+Form+for+Schemas
+/// https://avro.apache.org/docs/current/specification/#parsing-canonical-form-for-schemas
 fn parsing_canonical_form(schema: &Value) -> String {
     match schema {
         Value::Object(map) => pcf_map(map),
@@ -2145,6 +2156,7 @@ fn parsing_canonical_form(schema: &Value) -> String {
 fn pcf_map(schema: &Map<String, Value>) -> String {
     // Look for the namespace variant up front.
     let ns = schema.get("namespace").and_then(|v| v.as_str());
+    let typ = schema.get("type").and_then(|v| v.as_str());
     let mut fields = Vec::new();
     for (k, v) in schema {
         // Reduce primitive types to their simple form. ([PRIMITIVE] rule)
@@ -2156,7 +2168,12 @@ fn pcf_map(schema: &Map<String, Value>) -> String {
         }
 
         // Strip out unused fields ([STRIP] rule)
-        if field_ordering_position(k).is_none() || k == "default" || k == "doc" || k == "aliases" {
+        if field_ordering_position(k).is_none()
+            || k == "default"
+            || k == "doc"
+            || k == "aliases"
+            || k == "logicalType"
+        {
             continue;
         }
 
@@ -2165,7 +2182,9 @@ fn pcf_map(schema: &Map<String, Value>) -> String {
             // Invariant: Only valid schemas. Must be a string.
             let name = v.as_str().unwrap();
             let n = match ns {
-                Some(namespace) if !name.contains('.') => Cow::Owned(format!("{namespace}.{name}")),
+                Some(namespace) if is_named_type(typ) && !name.contains('.') => {
+                    Cow::Owned(format!("{namespace}.{name}"))
+                }
                 _ => Cow::Borrowed(name),
             };
 
@@ -2198,6 +2217,13 @@ fn pcf_map(schema: &Map<String, Value>) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("{{{inter}}}")
+}
+
+fn is_named_type(typ: Option<&str>) -> bool {
+    matches!(
+        typ,
+        Some("record") | Some("enum") | Some("fixed") | Some("ref")
+    )
 }
 
 fn pcf_array(arr: &[Value]) -> String {
@@ -2432,6 +2458,7 @@ pub mod derive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rabin::Rabin;
     use apache_avro_test_helper::{
         logger::{assert_logged, assert_not_logged},
         TestResult,
@@ -3404,16 +3431,16 @@ mod tests {
 
         let schema = Schema::parse_str(raw_schema)?;
         assert_eq!(
-            "abf662f831715ff78f88545a05a9262af75d6406b54e1a8a174ff1d2b75affc4",
+            "7eb3b28d73dfc99bdd9af1848298b40804a2f8ad5d2642be2ecc2ad34842b987",
             format!("{}", schema.fingerprint::<Sha256>())
         );
 
         assert_eq!(
-            "6e21c350f71b1a34e9efe90970f1bc69",
+            "cb11615e412ee5d872620d8df78ff6ae",
             format!("{}", schema.fingerprint::<Md5>())
         );
         assert_eq!(
-            "28cf0a67d9937bb3",
+            "92f2ccef718c6754",
             format!("{}", schema.fingerprint::<Rabin>())
         );
 
@@ -6751,6 +6778,30 @@ mod tests {
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn avro_4004_canonical_form_strip_logical_types() -> TestResult {
+        let schema_str = r#"
+      {
+        "type": "record",
+        "name": "test",
+        "fields": [
+            {"name": "a", "type": "long", "default": 42, "doc": "The field a"},
+            {"name": "b", "type": "string", "namespace": "test.a"},
+            {"name": "c", "type": "long", "logicalType": "timestamp-micros"}
+        ]
+    }"#;
+
+        let schema = Schema::parse_str(schema_str)?;
+        let canonical_form = schema.canonical_form();
+        let fp_rabin = schema.fingerprint::<Rabin>();
+        assert_eq!(
+            r#"{"name":"test","type":"record","fields":[{"name":"a","type":"long"},{"name":"b","type":"string"},{"name":"c","type":{"type":"long"}}]}"#,
+            canonical_form
+        );
+        assert_eq!("92f2ccef718c6754", fp_rabin.to_string());
         Ok(())
     }
 }

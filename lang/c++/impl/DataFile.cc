@@ -94,8 +94,8 @@ DataFileWriterBase::DataFileWriterBase(std::unique_ptr<OutputStream> outputStrea
 void DataFileWriterBase::init(const ValidSchema &schema, size_t syncInterval, const Codec &codec) {
     if (syncInterval < minSyncInterval || syncInterval > maxSyncInterval) {
         throw Exception(
-                "Invalid sync interval: {}. Should be between {} and {}",
-                syncInterval, minSyncInterval, maxSyncInterval);
+            "Invalid sync interval: {}. Should be between {} and {}",
+            syncInterval, minSyncInterval, maxSyncInterval);
     }
     setMetadata(AVRO_CODEC_KEY, AVRO_NULL_CODEC);
 
@@ -118,12 +118,11 @@ void DataFileWriterBase::init(const ValidSchema &schema, size_t syncInterval, co
     lastSync_ = stream_->byteCount();
 }
 
-DataFileWriterBase::~DataFileWriterBase()
-{
+DataFileWriterBase::~DataFileWriterBase() {
     if (stream_) {
         try {
             close();
-        } catch(...) {}
+        } catch (...) {}
     }
 }
 
@@ -196,10 +195,10 @@ void DataFileWriterBase::sync() {
             os.push(boost::iostreams::back_inserter(temp));
             boost::iostreams::write(os, compressed.c_str(), compressed_size);
         }
-        temp.push_back((checksum >> 24) & 0xFF);
-        temp.push_back((checksum >> 16) & 0xFF);
-        temp.push_back((checksum >> 8) & 0xFF);
-        temp.push_back(checksum & 0xFF);
+        temp.push_back(static_cast<char>((checksum >> 24) & 0xFF));
+        temp.push_back(static_cast<char>((checksum >> 16) & 0xFF));
+        temp.push_back(static_cast<char>((checksum >> 8) & 0xFF));
+        temp.push_back(static_cast<char>(checksum & 0xFF));
         std::unique_ptr<InputStream> in = memoryInputStream(
             reinterpret_cast<const uint8_t *>(temp.data()), temp.size());
         int64_t byteCount = temp.size();
@@ -412,8 +411,8 @@ void DataFileReaderBase::readDataBlock() {
         uint32_t c = crc();
         if (checksum != c) {
             throw Exception(
-                    "Checksum did not match for Snappy compression: Expected: {}, computed: {}",
-                    checksum, c);
+                "Checksum did not match for Snappy compression: Expected: {}, computed: {}",
+                checksum, c);
         }
         os_.reset(new boost::iostreams::filtering_istream());
         os_->push(
@@ -456,7 +455,7 @@ static ValidSchema makeSchema(const vector<uint8_t> &v) {
     istringstream iss(toString(v));
     ValidSchema vs;
     compileJsonSchema(iss, vs);
-    return ValidSchema(vs);
+    return vs;
 }
 
 void DataFileReaderBase::readHeader() {
@@ -528,8 +527,7 @@ void DataFileReaderBase::sync(int64_t position) {
             eof_ = true;
             return;
         }
-        int len =
-            std::min(static_cast<size_t>(SyncSize - i), n);
+        size_t len = std::min(SyncSize - i, n);
         memcpy(&sync_buffer[i], p, len);
         p += len;
         n -= len;

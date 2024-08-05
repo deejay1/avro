@@ -30,9 +30,9 @@
 #include <sstream>
 #include <utility>
 
+#include "CustomAttributes.hh"
 #include "Node.hh"
 #include "NodeConcepts.hh"
-#include "CustomAttributes.hh"
 
 namespace avro {
 
@@ -161,7 +161,7 @@ protected:
     void setLeafToSymbolic(size_t index, const NodePtr &node) override;
 
     void doAddCustomAttribute(const CustomAttributes &customAttributes) override {
-      customAttributes_.add(customAttributes);
+        customAttributes_.add(customAttributes);
     }
 
     SchemaResolution furtherResolution(const Node &reader) const {
@@ -226,8 +226,8 @@ using LeafNames = concepts::MultiAttribute<std::string>;
 using MultiAttributes = concepts::MultiAttribute<CustomAttributes>;
 using NoAttributes = concepts::NoAttribute<CustomAttributes>;
 
-using NoSize = concepts::NoAttribute<int>;
-using HasSize = concepts::SingleAttribute<int>;
+using NoSize = concepts::NoAttribute<size_t>;
+using HasSize = concepts::SingleAttribute<size_t>;
 
 using NodeImplPrimitive = NodeImpl<NoName, NoLeaves, NoLeafNames, MultiAttributes, NoSize>;
 using NodeImplSymbolic = NodeImpl<HasName, NoLeaves, NoLeafNames, NoAttributes, NoSize>;
@@ -325,10 +325,7 @@ public:
     void printJson(std::ostream &os, size_t depth) const override;
 
     bool isValid() const override {
-        return ((nameAttribute_.size() == 1) &&
-            (leafAttributes_.size() == leafNameAttributes_.size()) &&
-            (customAttributes_.size() == 0 ||
-            customAttributes_.size() == leafAttributes_.size()));
+        return ((nameAttribute_.size() == 1) && (leafAttributes_.size() == leafNameAttributes_.size()) && (customAttributes_.size() == 0 || customAttributes_.size() == leafAttributes_.size()));
     }
 
     const GenericDatum &defaultValueAt(size_t index) override {

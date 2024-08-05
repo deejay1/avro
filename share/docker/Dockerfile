@@ -17,7 +17,9 @@
 # Dockerfile for installing the necessary dependencies for building Avro.
 # See BUILD.md.
 
-FROM ubuntu:22.04
+ARG BUILDPLATFORM
+
+FROM --platform=$BUILDPLATFORM ubuntu:22.04
 WORKDIR /root
 
 ENV APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=isolemnlysweariamuptonogood \
@@ -55,13 +57,13 @@ RUN apt-get -qqy update \
                                                  libssl-dev \
                                                  make \
                                                  mypy \
-                                                 openjdk-8-jdk \
                                                  openjdk-11-jdk \
                                                  openjdk-17-jdk \
                                                  openjdk-21-jdk \
                                                  perl \
                                                  python3 \
                                                  python3-pip \
+                                                 python3-distutils \
                                                  python3-setuptools \
                                                  python3-snappy \
                                                  python3-venv \
@@ -72,7 +74,9 @@ RUN apt-get -qqy update \
                                                  python3.7 \
                                                  python3.7-distutils \
                                                  python3.8 \
+                                                 python3.8-distutils \
                                                  python3.9 \
+                                                 python3.9-distutils \
                                                  source-highlight \
                                                  subversion \
                                                  valgrind \
@@ -89,6 +93,14 @@ RUN apt-get -qqy install --no-install-recommends libzstd-dev \
                                                  php-xml \
                                                  php-mbstring \
                                                  php-dev
+
+# Required for Dotnet
+RUN export ARCH="$(dpkg --print-architecture)"; \
+  export LIBSSL_DEB="libssl1.1_1.1.1f-1ubuntu2.22_$ARCH.deb"; \
+  wget -q "http://security.ubuntu.com/ubuntu/pool/main/o/openssl/$LIBSSL_DEB" || \
+    wget -q "http://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl/$LIBSSL_DEB"; \
+  dpkg -i "$LIBSSL_DEB"; \
+  rm "$LIBSSL_DEB"
 
 # Install a maven release  -------------------------------------------
 # Inspired from https://github.com/apache/accumulo-docker/blob/bbb9892e165d40fb35fa19f38929effc5d0c709b/Dockerfile#L30
@@ -123,7 +135,7 @@ ENV PATH="/opt/maven/bin:${PATH}"
 # The node deprecation warnings cause a 20 second sleep.
 # But mom, I'm not even tired!
 RUN curl -sSL https://deb.nodesource.com/setup_14.x \
-  | sed 's/sleep 20/echo "But mom!"/' \
+  | sed 's/sleep/echo "But mom!"/' \
   | bash \
  && apt-get -qqy install nodejs \
  && apt-get -qqy clean \
@@ -132,7 +144,8 @@ RUN curl -sSL https://deb.nodesource.com/setup_14.x \
  && npm cache clean --force
 
 # Install PHP-snappy and PHP-zstd
-ENV PHP7_VERSION=7.4
+ENV PHP8_VERSION=8.1
+RUN mkdir -p "/etc/php/${PHP8_VERSION}/cli/conf.d"
 RUN mkdir tmp && cd tmp \
  && git clone --recursive --depth=1 https://github.com/kjdev/php-ext-zstd.git \
  && cd php-ext-zstd \
@@ -140,7 +153,7 @@ RUN mkdir tmp && cd tmp \
  && ./configure \
  && make \
  && make install \
- && echo "extension=zstd.so" > /etc/php/${PHP7_VERSION}/cli/conf.d/10-zstd.ini \
+ && echo "extension=zstd.so" > "/etc/php/${PHP8_VERSION}/cli/conf.d/10-zstd.ini" \
  && cd .. && rm -rf php-ext-zstd \
  && git clone --recursive --depth=1 https://github.com/kjdev/php-ext-snappy.git \
  && cd php-ext-snappy \
@@ -148,7 +161,7 @@ RUN mkdir tmp && cd tmp \
  && ./configure \
  && make \
  && make install \
- && echo "extension=snappy.so" > /etc/php/${PHP7_VERSION}/cli/conf.d/10-snappy.ini \
+ && echo "extension=snappy.so" > "/etc/php/${PHP8_VERSION}/cli/conf.d/10-snappy.ini" \
  && cd .. && rm -rf php-ext-snappy \
  && php -m \
  && apt-get -qqy clean
@@ -160,7 +173,7 @@ RUN apt-get -qqy install --no-install-recommends libcompress-raw-zlib-perl \
                                                  libcpan-uploader-perl \
                                                  libencode-perl \
                                                  libio-string-perl \
-                                                 libjson-xs-perl \
+                                                 libjson-maybexs-perl \
                                                  libmodule-install-perl \
                                                  libmodule-install-readmefrompod-perl \
                                                  libobject-tiny-perl \
@@ -210,16 +223,8 @@ RUN gem install bundler --no-document && \
     cd /tmp/lang/ruby && bundle install
 
 # Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.70.0
-
-# Note: This "ubertool" container has 4 JDK versions:
-# - OpenJDK 8
-# - OpenJDK 11
-# - OpenJDK 17
-# - OpenJDK 21
-# - The root build.sh script switches between the versions according to
-#   the JAVA environment variable.
-
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.73.0
+ENV PATH $PATH:/root/.cargo/bin/
 
 # Install .NET SDK
 RUN cd /opt ; \

@@ -157,6 +157,9 @@ do
       # runs RAT on artifacts
       mvn -N -P rat antrun:run verify
 
+      # install java artifacts required by other builds and interop tests
+      mvn -B install -DskipTests
+
       mkdir -p dist
       (cd build; tar czf "../dist/${SRC_DIR}.tar.gz" "${SRC_DIR}")
 
@@ -182,7 +185,8 @@ do
       # build docs
       cp -r doc/ build/staging-web/
       find build/staging-web/ -type f -print0 | xargs -0 sed -r -i "s#\+\+version\+\+#${VERSION,,}#g"
-      mv build/staging-web/content/en/docs/++version++ build/staging-web/content/en/docs/"${VERSION,,}"
+      mkdir -p build/staging-web/public/docs/
+      mv build/staging-web/doc/content/en/docs/++version++ build/staging-web/public/docs/"${VERSION,,}"
       read -n 1 -s -r -p "Build build/staging-web/ manually now. Press a key to continue..."
       # If it was a SNAPSHOT, it was lowercased during the build.
       cp -R build/staging-web/public/docs/"${VERSION,,}"/* "build/$DOC_DIR/"
@@ -309,9 +313,13 @@ do
         echo "RUN getent passwd $USER_ID || useradd -g $GROUP_ID -u $USER_ID -k /root -m $USER_NAME"
         echo "RUN mkdir -p /home/$USER_NAME/.m2/repository"
       } > Dockerfile
+
+      if [ -z "$BUILDPLATFORM" ]; then
+        export BUILDPLATFORM=$(docker info --format "{{.OSType}}/{{.Architecture}}")
+      fi
       # Include the ruby gemspec for preinstallation.
       # shellcheck disable=SC2086
-      tar -cf- Dockerfile $DOCKER_EXTRA_CONTEXT | DOCKER_BUILDKIT=1 docker build $DOCKER_BUILD_XTRA_ARGS -t "$DOCKER_IMAGE_NAME" -
+      tar -cf- Dockerfile $DOCKER_EXTRA_CONTEXT | DOCKER_BUILDKIT=1 docker build $DOCKER_BUILD_XTRA_ARGS --build-arg="BUILDPLATFORM=${BUILDPLATFORM}" -t "$DOCKER_IMAGE_NAME" -
       rm Dockerfile
       # By mapping the .m2/repository directory you can do an mvn install from
       # within the container and use the result on your normal
@@ -349,9 +357,15 @@ do
       ;;
 
     docker-test)
+      if [ -z "$BUILDPLATFORM" ]; then
+        export BUILDPLATFORM=$(docker info --format "{{.OSType}}/{{.Architecture}}")
+      fi
       tar -cf- share/docker/Dockerfile $DOCKER_EXTRA_CONTEXT |
-        DOCKER_BUILDKIT=1 docker build -t avro-test -f share/docker/Dockerfile -
-      docker run --rm -v "${PWD}:/avro${DOCKER_MOUNT_FLAG}" --env "JAVA=${JAVA:-8}" avro-test /avro/share/docker/run-tests.sh
+        DOCKER_BUILDKIT=1 docker build -t avro-test --build-arg BUILDPLATFORM="${BUILDPLATFORM}" -f share/docker/Dockerfile -
+      docker run --rm \
+        --volume "${PWD}:/avro${DOCKER_MOUNT_FLAG}" \
+        --volume "${PWD}/share/docker/m2/:/root/.m2/" \
+        --env "JAVA=${JAVA:-11}" avro-test /avro/share/docker/run-tests.sh
       ;;
 
     *)
